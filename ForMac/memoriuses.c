@@ -449,6 +449,77 @@ void draw_disk_bar(int y, int x, DiskStats *stats) {
     printw("] %.0f%% usado (%s de %s)", stats->percent_used, used_str, total_str);
 }
 
+// Obtener nombre del procesador
+void get_cpu_name(char *buf, size_t buflen) {
+    size_t len = buflen;
+    sysctlbyname("machdep.cpu.brand_string", buf, &len, NULL, 0);
+}
+
+// Obtener velocidad del procesador en GHz
+double get_cpu_speed_ghz() {
+    uint64_t hz = 0;
+    size_t len = sizeof(hz);
+    if (sysctlbyname("hw.cpufrequency", &hz, &len, NULL, 0) == 0 && hz > 0)
+        return hz / 1e9;
+    return 0.0;
+}
+
+// Obtener nombre del host
+void get_hostname(char *buf, size_t buflen) {
+    gethostname(buf, buflen);
+}
+
+// Obtener versión de macOS
+void get_macos_version(char *buf, size_t buflen) {
+    FILE *fp = popen("sw_vers -productVersion", "r");
+    if (fp) {
+        fgets(buf, buflen, fp);
+        buf[strcspn(buf, "\n")] = 0;
+        pclose(fp);
+    } else {
+        strncpy(buf, "N/D", buflen);
+    }
+}
+
+// Obtener dirección IP de la interfaz principal
+void get_ip_address(char *buf, size_t buflen) {
+    FILE *fp = popen("ipconfig getifaddr en0", "r");
+    if (fp) {
+        fgets(buf, buflen, fp);
+        buf[strcspn(buf, "\n")] = 0;
+        pclose(fp);
+    } else {
+        strncpy(buf, "N/D", buflen);
+    }
+}
+
+// Listar interfaces de red activas
+void list_active_interfaces(char *buf, size_t buflen) {
+    FILE *fp = popen("ifconfig | grep 'flags=' | awk -F: '{print $1}'", "r");
+    if (!fp) { strncpy(buf, "N/D", buflen); return; }
+    buf[0] = 0;
+    char line[64];
+    while (fgets(line, sizeof(line), fp)) {
+        strncat(buf, line, buflen - strlen(buf) - 1);
+        if (strlen(buf) > buflen - 16) break;
+    }
+    pclose(fp);
+}
+
+// Listado de procesos: PID, nombre, %CPU, %MEM
+void draw_process_list(int y, int x, int max_rows) {
+    FILE *fp = popen("ps -axo pid,comm,%cpu,%mem | head -n 16", "r");
+    if (!fp) return;
+    char line[128];
+    int row = 0;
+    mvprintw(y, x, "PID     Nombre                CPU%%   MEM%%");
+    while (fgets(line, sizeof(line), fp) && row < max_rows) {
+        mvprintw(y + row + 1, x, "%.*s", (int)sizeof(line)-1, line);
+        row++;
+    }
+    pclose(fp);
+}
+
 int main() {
     // Inicializar ncurses
     initscr();
@@ -489,6 +560,12 @@ int main() {
     ProcessStats proc_stats;
     DiskStats disk_stats;
 
+    char cpu_name[128] = "N/D";
+    char hostname[64] = "N/D";
+    char macos_version[32] = "N/D";
+    char ip_addr[32] = "N/D";
+    char interfaces[256] = "N/D";
+
     while (1) {
         clear();
 
@@ -526,19 +603,23 @@ int main() {
         // --- CABECERA ---
         if (has_colors()) attron(COLOR_PAIR(4));
         attron(A_BOLD);
-        mvprintw(0, 0, "=== MONITOR DE MEMORIA macOS ===");
-        mvprintw(1, 0, "Actualizado: %s", time_str);
+        mvprintw(0, 0, "=== MONITOR DE SISTEMA macOS ===");
         attroff(A_BOLD);
         if (has_colors()) attroff(COLOR_PAIR(4));
+        mvprintw(1, 0, "Actualizado: %s", ctime(&now));
+
+        // --- CPU ---
+        mvprintw(3, 0, "CPU:");
+        mvprintw(4, 2, "Nombre: %s", cpu_name);
+        mvprintw(5, 2, "Núcleos: %d", get_cpu_count());
+        mvprintw(6, 2, "Velocidad: %.2f GHz", get_cpu_speed_ghz());
+        mvprintw(7, 2, "Uso: %.1f%%", cpu_usage);
 
         // --- RAM ---
-        mvprintw(3, 0, "MEMORIA RAM:");
-        mvprintw(4, 2, "Total:      %s", total_ram_str);
-        mvprintw(5, 2, "Usada:      %s", used_ram_str);
-        mvprintw(6, 2, "Libre:      %s", free_ram_str);
-        mvprintw(7, 2, "Inactiva:   %s", inactive_ram_str);
-        mvprintw(8, 2, "Wired:      %s", wired_ram_str);
-        mvprintw(9, 2, "Comprimida: %s", compressed_ram_str);
+        mvprintw(9, 0, "MEMORIA RAM:");
+        mvprintw(10, 2, "Total: %s", total_ram_str);
+        mvprintw(11, 2, "Usada: %s", used_ram_str);
+        mvprintw(12, 2, "Libre: %s", free_ram_str);
 
         // --- TEMPERATURA CPU ---
         double cpu_temp = get_cpu_temperature_cached();
@@ -633,6 +714,6 @@ int main() {
     }
 
     endwin();
-    printf("Monitor de memoria finalizado.\n");
+    printf("Monitor de sistema finalizado.\n");
     return 0;
 }
